@@ -25,15 +25,36 @@
 import { stripTags } from '#/simulator/src/utils'
 import { useState } from '#/store/SimulatorStore/state'
 import messageBox from '@/MessageBox/messageBox.vue'
-import { ref } from 'vue'
-import { onMounted } from 'vue'
+import { provide, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 
 /* imports from combinationalAnalysis.js */
 import { GenerateCircuit, solveBooleanFunction } from '#/simulator/src/combinationalAnalysis'
 
 const SimulatorState = useState()
+let resetTimeout: ReturnType<typeof setTimeout> | null = null
+
+function cancelPendingReset() {
+    if (resetTimeout !== null) {
+        clearTimeout(resetTimeout)
+        resetTimeout = null
+    }
+}
+
+watch(
+    () => SimulatorState.dialogBox.combinationalanalysis_dialog,
+    (isOpen) => {
+        if (isOpen) {
+            cancelPendingReset()
+        }
+    }
+)
+
 onMounted(() => {
     SimulatorState.dialogBox.combinationalanalysis_dialog = false
+})
+
+onBeforeUnmount(() => {
+    cancelPendingReset()
 })
 const inputArr = ref([{}])
 const buttonArr = ref([{}])
@@ -47,6 +68,9 @@ const tableHeader = ref([])
 const tableBody = ref([])
 const output = ref([])
 const outputStartCol = ref(0)
+const undoStack = ref([])
+const redoStack = ref([])
+
 
 inputArr.value = [
     {
@@ -108,6 +132,7 @@ const buttonArray = [
 buttonArr.value = buttonArray
 
 function clearData() {
+    cancelPendingReset()
     inputArr.value[0].val = ''
     inputArr.value[1].val = ''
     inputArr.value[3].val = ''
@@ -120,7 +145,39 @@ function clearData() {
     tableBody.value = []
     output.value = []
     outputStartCol.value = 0
+    undoStack.value = []
+    redoStack.value = []
 }
+
+function recordEdit(action) {
+    undoStack.value.push(
+     action)
+    redoStack.value = []
+}
+
+function undo() {
+    const action = undoStack.value.pop()
+    if (!action) return
+
+    tableBody.value[action.rowIndex][action.colIndex] = action.prevValue
+    redoStack.value.push(action)
+}
+
+function redo() {
+    const action = redoStack.value.pop()
+    if (!action) return
+
+    tableBody.value[action.rowIndex][action.colIndex] = action.nextValue
+    undoStack.value.push(action)
+}
+
+provide('tableHistory',{
+    undoStack,
+    redoStack,
+    recordEdit,
+    undo,
+    redo
+})
 
 function dialogBoxConformation(selectedOption, circuitItem) {
     // SimulatorState.dialogBox.combinationalanalysis_dialog = false
@@ -128,17 +185,33 @@ function dialogBoxConformation(selectedOption, circuitItem) {
     if (selectedOption == 'showLogicTable') {
         createLogicTable()
     }
+
+    if (selectedOption == 'backToInputs') {
+        tableHeader.value = []
+        tableBody.value = []
+        outputListNamesInteger.value = []
+        outputListNames.value = []
+        inputListNames.value = []
+        output.value = []
+        buttonArr.value = buttonArray
+        undoStack.value = []
+        redoStack.value = []
+    }
     if (selectedOption == 'closeMessageBox') {
-        for (var ind = 0; ind < inputArr.value.length; ind++) {
-            if (inputArr.value[ind].type == 'text') {
-                inputArr.value[ind].val = ''
-            }
-            if (inputArr.value[ind].type == 'checkbox') {
-                inputArr.value[ind].val = false
-            }
-        }
-        clearData()
         SimulatorState.dialogBox.combinationalanalysis_dialog = false
+        cancelPendingReset()
+        resetTimeout = setTimeout(() => {
+            for (var ind = 0; ind < inputArr.value.length; ind++) {
+                if (inputArr.value[ind].type == 'text') {
+                    inputArr.value[ind].val = ''
+                }
+                if (inputArr.value[ind].type == 'checkbox') {
+                    inputArr.value[ind].val = false
+                }
+            }
+            clearData()
+            resetTimeout = null
+        }, 300)
     }
     if (selectedOption == 'generateCircuit') {
         SimulatorState.dialogBox.combinationalanalysis_dialog = false
@@ -150,13 +223,20 @@ function dialogBoxConformation(selectedOption, circuitItem) {
             tableBody.value,
             outputStartCol.value
         )
-        clearData()
-        SimulatorState.dialogBox.combinationalanalysis_dialog = false
+        cancelPendingReset()
+        resetTimeout = setTimeout(() => {
+            clearData()
+            resetTimeout = null
+        }, 300)
     }
     if (selectedOption == 'printTruthTable') {
         printBooleanTable()
-        clearData()
         SimulatorState.dialogBox.combinationalanalysis_dialog = false
+        cancelPendingReset()
+        resetTimeout = setTimeout(() => {
+            clearData()
+            resetTimeout = null
+        }, 300)
     }
 }
 
@@ -229,6 +309,7 @@ function createBooleanPrompt(inputList, outputList, scope = globalScope) {
         inputList || prompt('Enter inputs separated by commas').split(',')
     outputListNames.value =
         outputList || prompt('Enter outputs separated by commas').split(',')
+    outputListNamesInteger.value = []
     if (output.value == null) {
         for (var i = 0; i < outputListNames.value.length; i++) {
             outputListNamesInteger.value[i] = 7 * i + 13
@@ -286,6 +367,14 @@ function createBooleanPrompt(inputList, outputList, scope = globalScope) {
     SimulatorState.dialogBox.combinationalanalysis_dialog = true
     buttonArr.value = [
         {
+            text: 'Back',
+            emitOption: 'backToInputs',
+        },
+        {
+            text: 'Close',
+            emitOption: 'closeMessageBox',
+        },
+        {
             text: 'Generate Circuit',
             emitOption: 'generateCircuit',
         },
@@ -297,13 +386,15 @@ function createBooleanPrompt(inputList, outputList, scope = globalScope) {
 }
 
 function printBooleanTable() {
-    var sTable = $('.messageBox .v-card-text')[0].innerHTML
+    var tableEl = $('.messageBox .v-card-text table')[0]
+    var sTable = tableEl ? tableEl.outerHTML : $('.messageBox .v-card-text')[0]?.innerHTML || ''
 
     var style =
         `<style>
         table {font: 40px Calibri;}
         table, th, td {border: solid 1px #DDD;border-collapse: 0;}
         tbody {padding: 2px 3px;text-align: center;}
+        .table-toolbar {display: none !important;}
         </style>`.replace(/\n/g, "")
     var win = window.open('', '', 'height=700,width=700')
     var htmlBody = `
