@@ -56,6 +56,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     cancelPendingReset()
 })
+
 const inputArr = ref([{}])
 const buttonArr = ref([{}])
 const showAlert = ref(false)
@@ -70,7 +71,6 @@ const output = ref([])
 const outputStartCol = ref(0)
 const undoStack = ref([])
 const redoStack = ref([])
-
 
 inputArr.value = [
     {
@@ -136,7 +136,7 @@ function clearData() {
     inputArr.value[0].val = ''
     inputArr.value[1].val = ''
     inputArr.value[3].val = ''
-    inputArr.value[4].val = ''
+    inputArr.value[4].val = false
     buttonArr.value = buttonArray
     outputListNamesInteger.value = []
     inputListNames.value = []
@@ -150,8 +150,7 @@ function clearData() {
 }
 
 function recordEdit(action) {
-    undoStack.value.push(
-     action)
+    undoStack.value.push(action)
     redoStack.value = []
 }
 
@@ -171,12 +170,12 @@ function redo() {
     undoStack.value.push(action)
 }
 
-provide('tableHistory',{
+provide('tableHistory', {
     undoStack,
     redoStack,
     recordEdit,
     undo,
-    redo
+    redo,
 })
 
 function dialogBoxConformation(selectedOption, circuitItem) {
@@ -185,14 +184,14 @@ function dialogBoxConformation(selectedOption, circuitItem) {
     if (selectedOption == 'showLogicTable') {
         createLogicTable()
     }
-
-    if (selectedOption == 'backToInputs') {
+    if (selectedOption == 'backToInputPrompt' || selectedOption == 'backToInputs') {
         tableHeader.value = []
         tableBody.value = []
-        outputListNamesInteger.value = []
-        outputListNames.value = []
-        inputListNames.value = []
         output.value = []
+        outputListNames.value = []
+        outputListNamesInteger.value = []
+        inputListNames.value = []
+        outputStartCol.value = 0
         buttonArr.value = buttonArray
         undoStack.value = []
         redoStack.value = []
@@ -230,13 +229,15 @@ function dialogBoxConformation(selectedOption, circuitItem) {
         }, 300)
     }
     if (selectedOption == 'printTruthTable') {
-        printBooleanTable()
-        SimulatorState.dialogBox.combinationalanalysis_dialog = false
-        cancelPendingReset()
-        resetTimeout = setTimeout(() => {
-            clearData()
-            resetTimeout = null
-        }, 300)
+        const isSuccess = printBooleanTable()
+        if (isSuccess) {
+            SimulatorState.dialogBox.combinationalanalysis_dialog = false
+            cancelPendingReset()
+            resetTimeout = setTimeout(() => {
+                clearData()
+                resetTimeout = null
+            }, 300)
+        }
     }
 }
 
@@ -367,14 +368,6 @@ function createBooleanPrompt(inputList, outputList, scope = globalScope) {
     SimulatorState.dialogBox.combinationalanalysis_dialog = true
     buttonArr.value = [
         {
-            text: 'Back',
-            emitOption: 'backToInputs',
-        },
-        {
-            text: 'Close',
-            emitOption: 'closeMessageBox',
-        },
-        {
             text: 'Generate Circuit',
             emitOption: 'generateCircuit',
         },
@@ -382,12 +375,23 @@ function createBooleanPrompt(inputList, outputList, scope = globalScope) {
             text: 'Print Truth Table',
             emitOption: 'printTruthTable',
         },
+        {
+            text: 'Back',
+            emitOption: 'backToInputPrompt',
+        },
+        {
+            text: 'Close',
+            emitOption: 'closeMessageBox',
+        },
     ]
 }
 
 function printBooleanTable() {
-    var tableEl = $('.messageBox .v-card-text table')[0]
-    var sTable = tableEl ? tableEl.outerHTML : $('.messageBox .v-card-text')[0]?.innerHTML || ''
+    const textElem = $('.messageBox .v-card-text')[0]
+    if (!textElem) return false
+
+    const tableEl = $('.messageBox .v-card-text table')[0]
+    var sTable = tableEl ? tableEl.outerHTML : textElem.innerHTML
 
     var style =
         `<style>
@@ -397,6 +401,8 @@ function printBooleanTable() {
         .table-toolbar {display: none !important;}
         </style>`.replace(/\n/g, "")
     var win = window.open('', '', 'height=700,width=700')
+    if (!win) return false
+
     var htmlBody = `
                        <html><head>\
                        <title>Boolean Logic Table</title>\
@@ -409,6 +415,7 @@ function printBooleanTable() {
     win.document.write(htmlBody)
     win.document.close()
     win.print()
+    return true
 }
 </script>
 
